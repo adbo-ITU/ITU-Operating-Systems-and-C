@@ -1,0 +1,3 @@
+[submodule "22-Lab1-datalab"]
+	path = 22-Lab1-datalab
+	url = git@github.itu.dk:adbo/22-Lab1-datalab.git
