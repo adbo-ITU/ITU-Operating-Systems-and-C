@@ -12,7 +12,7 @@ f30f1efa554889e5897dfc8975f8837dfc007411837df80074
 
 We can find matches on lines 322, 325, and 328 of the hex repr:
 ```hex
-$ xxd ex18.out | grep "f30f 1efa 5548" -C 1 -n ex18.hex
+$ xxd ex18.out | grep "f30f 1efa 5548" -C 1 -n
 297-00001280: b800 0000 00e8 76fe ffff bf01 0000 00e8  ......v.........
 298:00001290: bcfe ffff f30f 1efa 5548 89e5 4883 ec40  ........UH..H..@
 299-000012a0: 4889 7dd8 8975 d448 8955 c8c7 45f4 0000  H.}..u.H.U..E...
