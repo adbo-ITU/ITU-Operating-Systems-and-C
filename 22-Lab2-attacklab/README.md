@@ -182,7 +182,7 @@ Breakpoint 1, getbuf () at buf.c:15
 0x556092b0:     0x79    0x28    0x40    0x00    0x00    0x00    0x00    0x00
 ```
 
-We can see that our input bytes start at address `0x55609288`. The last line shows the address (`0x402879`) of the original instruction that we would normally return to - but we will overwrite this address with the address to our exploit code instead.
+We can see that our input bytes start at address `0x55609288`. The last line shows the address (`0x402879`) of the original instruction that we would normally return to - but we will overwrite this address with the address to our exploit code instead. It should be noted at we do not need to put our exploit code precisely at `$rsp` - we could put it anywhere inside the shown memory as long as we "return" to that place in the memory.
 
 We can now create our final buffer overflow input:
 
