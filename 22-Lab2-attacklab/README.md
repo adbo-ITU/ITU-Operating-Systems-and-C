@@ -61,7 +61,7 @@ Type string:No exploit.  Getbuf returned 0x1
 Normal return
 
 # Pipe one more byte into the program:
-(cat inp.txt; echo " 00") | ./hex2raw | ./ctarget
+$ (cat inp.txt; echo " 00") | ./hex2raw | ./ctarget
 Cookie: 0x5d21660e
 Type string:Ouch!: You caused a segmentation fault!
 Better luck next time
