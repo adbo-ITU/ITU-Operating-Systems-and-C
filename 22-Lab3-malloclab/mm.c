@@ -69,8 +69,15 @@ team_t team = {
 
 static void *heap_listp = NULL;
 
+void print_block(void *ptr) {
+    unsigned int* next = (unsigned int*) NEXT_BLKP(ptr);
+    printf("[%s] Addr: %p. Size: %d. Next: %p.\n",
+      GET_ALLOC(HDRP(ptr)) ? "Allocated" : "Free     ",
+      ptr, GET_SIZE(HDRP(ptr)), next);
+}
+
 void heapdump() {
-  printf("\n\n");
+  printf("\n");
   printf("----------------- HEAP DUMP -----------------\n");
 
   printf("- Heap boundary: %p to %p\n", mem_heap_lo(), mem_heap_hi());
@@ -78,13 +85,28 @@ void heapdump() {
   printf("- Heap start ptr: %p\n", heap_listp);
 
   printf("\nHeap dump:\n");
-  unsigned int* p = (unsigned int*) mem_heap_lo();
+
+  // Print all words
+  // int n = 0;
+  // unsigned int* p = (unsigned int*) mem_heap_lo();
+  // while ((void *) p <= (unsigned int*) mem_heap_hi() +  1) {
+  //   printf("[%4d]  %p: 0x%x\n", n, p, *p);
+  //   p += 1;
+  //   n += 1;
+  // }
+
+  // Print all blocks
   int n = 0;
-  while ((void *) p <= (unsigned int*) mem_heap_hi() +  1) {
-    printf("[%4d]  %p: 0x%x\n", n, p, *p);
-    p += 1;
-    n += 1;
+  unsigned int* ptr = (unsigned int*) heap_listp;
+  while (GET_SIZE(HDRP(ptr)) > 0) {
+    printf("%d. ", n);
+    print_block(ptr);
+
+    ptr = (unsigned int*) NEXT_BLKP(ptr);
+    n++;
   }
+  printf("E. ");
+  print_block(ptr);
 
   printf("--------------- END HEAP DUMP ---------------\n\n");
 }
@@ -154,14 +176,10 @@ int mm_init(void)
 
   heap_listp += (2 * WSIZE); // Start heap at prologue footer
 
-  heapdump();
-
   /* Extend the empty heap with a free block of CHUNKSIZE bytes */
   if (extend_heap(CHUNKSIZE / WSIZE) == NULL) {
     return -1;
   }
-
-  heapdump();
 
   return 0;
 }
@@ -172,11 +190,11 @@ static void *find_fit(size_t size) {
 
   // All blocks are at least 1 in size except the epilogue (end of heap)
   while (GET_SIZE(HDRP(ptr)) > 0) {
-    if (!GET_ALLOC(ptr) && GET_SIZE(HDRP(ptr)) >= size) {
+    if (!GET_ALLOC(HDRP(ptr)) && GET_SIZE(HDRP(ptr)) >= size) {
       return ptr;
     }
 
-    ptr = NEXT_BLKP(HDRP(ptr));
+    ptr = NEXT_BLKP(ptr);
   }
 
   return NULL;
