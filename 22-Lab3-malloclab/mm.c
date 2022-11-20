@@ -272,7 +272,7 @@ static void *extend_heap(size_t words)
 /*
  * Coalesces adjacent free blocks into a single free block.
  *
- * If an encountered block is marked as free, that block MUST ne on the free list.
+ * If an encountered block is marked as free, that block MUST be on the free list.
  */
 static void *coalesce(void *bp)
 {
