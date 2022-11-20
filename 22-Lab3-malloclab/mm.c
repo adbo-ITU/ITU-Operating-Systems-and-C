@@ -150,20 +150,16 @@ void *mm_malloc(size_t size)
     // Search for a fitting block
     void *block_ptr = find_fit(block_size);
 
-    if (block_ptr != NULL)
+    if (block_ptr == NULL)
     {
-        remove_from_free_list(block_ptr);
-
-        place(block_ptr, block_size);
-
-        return block_ptr;
+        // No fit found. Get more memory.
+        size_t extend_size = max(block_size, CHUNKSIZE);
+        block_ptr = extend_heap(extend_size / WSIZE);
+        if (block_ptr == NULL)
+            return NULL;
     }
 
-    // No fit found. Get more memory and place the block
-    size_t extend_size = max(block_size, CHUNKSIZE);
-    if ((block_ptr = extend_heap(extend_size / WSIZE)) == NULL)
-        return NULL;
-
+    remove_from_free_list(block_ptr);
     place(block_ptr, block_size);
 
     return block_ptr;
@@ -241,9 +237,7 @@ static void place(void *ptr, size_t size)
         set_val(get_footer_ptr(next_block_ptr), make_header(remaining_size, 0));
 
         // Add the next block to the free list
-        set_next_free_block_ptr(next_block_ptr, get_next_free_block_ptr(ptr));
-        set_prev_free_block_ptr(next_block_ptr, get_prev_free_block_ptr(ptr));
-        free_list = next_block_ptr;
+        add_to_free_list(next_block_ptr);
     }
     // There is not space for another block, so we don't split
     else
