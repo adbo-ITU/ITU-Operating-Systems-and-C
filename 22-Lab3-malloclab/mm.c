@@ -37,13 +37,12 @@ team_t team = {
 /* single word (4) or double word (8) alignment */
 #define ALIGNMENT 8
 /* rounds up to the nearest multiple of ALIGNMENT */
-#define ALIGN(size) (((size) + (ALIGNMENT - 1)) & ~0x7)
-#define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
+#define align(size) (((size) + (ALIGNMENT - 1)) & ~0x7)
+#define SIZE_T_SIZE (align(sizeof(size_t)))
 
-#define WSIZE 4                    /* Word and header/footer size (bytes) */
-#define DSIZE 8                    /* Double word size (bytes) */
-#define MIN_BLOCK_SIZE (2 * DSIZE) /* Blocks must at least be 2x double words */
-#define CHUNKSIZE (1 << 12)        /* Extend heap by this amount (bytes) */
+#define WSIZE 4             /* Word and header/footer size (bytes) */
+#define DSIZE 8             /* Double word size (bytes) */
+#define CHUNKSIZE (1 << 12) /* Extend heap by this amount (bytes) */
 
 /* Pack a size and allocated bit into a word */
 #define make_header(block_size, is_allocated) ((block_size) | (is_allocated))
@@ -65,17 +64,32 @@ team_t team = {
 #define get_next_block_ptr(block_ptr) ((char *)(block_ptr) + get_size(get_header_ptr(block_ptr)))
 #define get_prev_block_ptr(block_ptr) ((char *)(block_ptr)-get_size(((char *)(bp)-DSIZE)))
 
+#define here (printf("%s:%d - %s\n", __FILE__, __LINE__, __func__))
+#define dbg(val) printf("%s = 0x%x\n", #val, (unsigned int)val);
+
+/*
+ * Given the size of the data, calculates how many bytes are needed to store the
+ * block:
+ *   - 1 word for header
+ *   - 1 word for footer
+ *   - 8-byte aligned data size
+ */
+#define calc_block_size(data_size) (WSIZE + WSIZE + align(data_size));
+
 #define max(x, y) ((x) > (y) ? (x) : (y))
 
 /* Private functions in this file */
 static void *coalesce(void *bp);
-static void *find_fit(size_t size);
 static void *extend_heap(size_t words);
 static void place(void *ptr, size_t size);
 static void heapdump();
+static void mm_check();
 
 /* Global (private) variables */
 static void *heap_ptr = NULL;
+static void *free_list = NULL;
+
+static int MIN_BLOCK_SIZE = calc_block_size(1);
 
 /*
  * mm_init - initialize the malloc package.
@@ -97,10 +111,17 @@ int mm_init(void)
     heap_ptr += (2 * WSIZE); // Start heap at prologue footer
 
     /* Extend the empty heap with a free block of CHUNKSIZE bytes */
-    if (extend_heap(CHUNKSIZE / WSIZE) == NULL)
-    {
+    void *first_real_block_ptr = extend_heap(CHUNKSIZE / WSIZE);
+    if (first_real_block_ptr == NULL)
         return -1;
-    }
+
+    // Start free list at the new block we got after extending the heap
+    free_list = first_real_block_ptr;
+    // Set the initial payload (pointer to next free item) to NULL
+    set_val(free_list, 0);
+
+    here;
+    heapdump();
 
     return 0;
 }
@@ -111,35 +132,76 @@ int mm_init(void)
  */
 void *mm_malloc(size_t size)
 {
-    size_t asize;      /* Adjusted block size */
-    size_t extendsize; /* Amount to extend heap if no fit */
-    char *bp;
+    printf("Allocate %d bytes\n", size);
 
-    /* Ignore spurious requests */
+    // Ignore spurious requests
     if (size == 0)
         return NULL;
 
-    /* Adjust block size to include overhead and alignment reqs. */
-    if (size <= DSIZE)
-        asize = 2 * DSIZE;
-    else
-        asize = DSIZE * ((size + (DSIZE) + (DSIZE - 1)) / DSIZE);
+    // Adjust block size to include overhead and alignment reqs.
+    // Size will always be at least 1 due to the check above
+    size_t block_size = calc_block_size(size);
 
-    /* Search the free list for a fit */
-    if ((bp = find_fit(asize)) != NULL)
+    // Search for a fitting block
+    void *block_ptr = free_list;
+    void *prev_free_block_ptr = NULL;
+    while (block_ptr != NULL)
     {
-        place(bp, asize);
-        return bp;
+        if (get_size(get_header_ptr(block_ptr)) >= size)
+            break;
+
+        // Travel to the next free item, whose pointer is stored as the payload
+        prev_free_block_ptr = block_ptr;
+        block_ptr = (void *)get_val(block_ptr);
     }
 
-    /* No fit found. Get more memory and place the block */
-    extendsize = max(asize, CHUNKSIZE);
-    if ((bp = extend_heap(extendsize / WSIZE)) == NULL)
+    if (block_ptr != NULL)
+    {
+        // Make the previous free block point to the next free block
+        if (prev_free_block_ptr != NULL)
+            set_val(prev_free_block_ptr, get_val(block_ptr));
+        else
+            free_list = get_val(block_ptr);
+
+        place(block_ptr, block_size);
+
+        return block_ptr;
+    }
+
+    // No fit found. Get more memory and place the block
+    size_t extend_size = max(block_size, CHUNKSIZE);
+    if ((block_ptr = extend_heap(extend_size / WSIZE)) == NULL)
         return NULL;
 
-    place(bp, asize);
+    here;
+    heapdump();
 
-    return bp;
+    dbg(prev_free_block_ptr);
+    dbg(free_list);
+    dbg(block_ptr);
+
+    void *free_block_ptr = free_list;
+    printf("\n");
+    while (free_block_ptr != NULL)
+    {
+        printf("cmp %p == %p\n", block_ptr, get_val(free_block_ptr));
+        if (block_ptr == get_val(free_block_ptr))
+        {
+            printf("Parent to %p found at %p\n", block_ptr, free_block_ptr);
+        }
+
+        free_block_ptr = (void *)get_val(free_block_ptr);
+    }
+    printf("\n");
+
+    place(block_ptr, block_size);
+
+    here;
+    heapdump();
+
+    exit(1);
+
+    return block_ptr;
 }
 
 /*
@@ -147,6 +209,8 @@ void *mm_malloc(size_t size)
  */
 void mm_free(void *ptr)
 {
+    here;
+
     size_t size = get_size(get_header_ptr(ptr));
 
     set_val(get_header_ptr(ptr), make_header(size, 0));
@@ -175,31 +239,15 @@ void *mm_realloc(void *ptr, size_t size)
     return newptr;
 }
 
-/* Searches the heap for a block large enough to hold `size` using first-fit. */
-static void *find_fit(size_t size)
-{
-    void *ptr = heap_ptr;
-
-    // All blocks are at least 1 in size except the epilogue (end of heap)
-    while (get_size(get_header_ptr(ptr)) > 0)
-    {
-        if (is_free(get_header_ptr(ptr)) && get_size(get_header_ptr(ptr)) >= size)
-        {
-            return ptr;
-        }
-
-        ptr = get_next_block_ptr(ptr);
-    }
-
-    return NULL;
-}
-
 /*
  * Places a block at the given block pointer. If the placed block leaves space
  * for another block after it, the existing block will be split in two.
  */
 static void place(void *ptr, size_t size)
 {
+    here;
+    dbg(ptr);
+
     size_t cur_size = get_size(get_header_ptr(ptr));
     size_t remaining_size = cur_size - size;
 
@@ -209,8 +257,16 @@ static void place(void *ptr, size_t size)
         set_val(get_header_ptr(ptr), make_header(size, 1));
         set_val(get_footer_ptr(ptr), make_header(size, 1));
 
-        set_val(get_header_ptr(get_next_block_ptr(ptr)), make_header(remaining_size, 0));
-        set_val(get_footer_ptr(get_next_block_ptr(ptr)), make_header(remaining_size, 0));
+        void *next_block_ptr = get_next_block_ptr(ptr);
+        set_val(get_header_ptr(next_block_ptr), make_header(remaining_size, 0));
+        set_val(get_footer_ptr(next_block_ptr), make_header(remaining_size, 0));
+
+        dbg(next_block_ptr);
+        dbg(free_list);
+
+        // Add the next block to the free list
+        set_val(next_block_ptr, free_list);
+        free_list = next_block_ptr;
     }
     // There is not space for another block, so we don't split
     else
@@ -218,6 +274,8 @@ static void place(void *ptr, size_t size)
         set_val(get_header_ptr(ptr), make_header(cur_size, 1));
         set_val(get_footer_ptr(ptr), make_header(cur_size, 1));
     }
+
+    here;
 }
 
 /* Increases the size of the heap with the given number of words */
@@ -287,6 +345,13 @@ static void print_block(void *ptr)
            ptr, get_size(get_header_ptr(ptr)), next);
 }
 
+static void print_free_block(void *ptr)
+{
+    printf("[%s] Addr: %p. Size: %d. Payload: %p.\n",
+           is_allocated(get_header_ptr(ptr)) ? "Allocated" : "Free     ",
+           ptr, get_size(get_header_ptr(ptr)), (void *)get_val(ptr));
+}
+
 static void heapdump()
 {
     printf("\n");
@@ -295,6 +360,7 @@ static void heapdump()
     printf("- Heap boundary: %p to %p\n", mem_heap_lo(), mem_heap_hi());
     printf("- Heap size: %d bytes\n", mem_heapsize());
     printf("- Heap start ptr: %p\n", heap_ptr);
+    printf("- Free list start ptr: %p\n", free_list);
 
     printf("\nHeap dump:\n");
 
@@ -312,5 +378,31 @@ static void heapdump()
     printf("E. ");
     print_block(ptr);
 
+    printf("\nFree list:\n");
+    void *block_ptr = free_list;
+    n = 0;
+    while (block_ptr != NULL)
+    {
+        printf("%d. ", n);
+        print_free_block(block_ptr);
+        block_ptr = (void *)get_val(block_ptr);
+        n++;
+    }
+
     printf("--------------- END HEAP DUMP ---------------\n\n");
+}
+
+static void mm_check()
+{
+    void *block_ptr = free_list;
+    while (block_ptr != NULL)
+    {
+        if (is_allocated(get_header_ptr(block_ptr)))
+        {
+            printf("ILLEGAL: allocated block detected on free list:\n   ");
+            print_block(block_ptr);
+        }
+
+        block_ptr = (void *)get_val(block_ptr);
+    }
 }
