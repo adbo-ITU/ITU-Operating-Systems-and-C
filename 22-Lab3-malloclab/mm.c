@@ -46,34 +46,35 @@ team_t team = {
 #define MIN_BLOCK_SIZE (2 * DSIZE) /* Blocks must at least be 2x double words */
 #define CHUNKSIZE (1<<12) /* Extend heap by this amount (bytes) */
 
-#define MAX(x, y) ((x) > (y)? (x) : (y))
-
 /* Pack a size and allocated bit into a word */
-#define PACK(size, alloc) ((size) | (alloc))
+#define make_header(block_size, is_allocated) ((block_size) | (is_allocated))
 
 /* Read and write a word at address p */
-#define GET(p)      (*(unsigned int *)(p))
-#define PUT(p, val) (*(unsigned int *)(p) = (val))
+#define get_val(ptr)      (*(unsigned int *)(ptr))
+#define set_val(ptr, val) (*(unsigned int *)(ptr) = (val))
 
 /* Read the size and allocated fields from pointer p */
-#define GET_SIZE(p)  (GET(p) & ~0x7)
-#define GET_ALLOC(p) (GET(p) & 0x1)
+#define get_size(ptr)     (get_val(ptr) & ~0x7)
+#define is_allocated(ptr) (get_val(ptr) & 0x1)
+#define is_free(ptr)      (!(is_allocated(ptr)))
 
-/* Given block ptr bp, compute address of its header and footer */
-#define HDRP(bp) ((char *)(bp) - WSIZE)
-#define FTRP(bp) ((char *)(bp) + GET_SIZE(HDRP(bp)) - DSIZE)
+/* Given block ptr bp, compute address of its header and footer. */
+#define get_header_ptr(block_ptr) ((char *)(block_ptr) - WSIZE)
+#define get_footer_ptr(block_ptr) ((char *)(block_ptr) + get_size(get_header_ptr(block_ptr)) - DSIZE)
 
 /* Given block ptr bp, compute address of next and previous blocks */
-#define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE)))
-#define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))
+#define get_next_block_ptr(block_ptr) ((char *)(block_ptr) + get_size(get_header_ptr(block_ptr)))
+#define get_prev_block_ptr(block_ptr) ((char *)(block_ptr) - get_size(((char *)(bp) - DSIZE)))
+
+#define max(x, y) ((x) > (y) ? (x) : (y))
 
 static void *heap_listp = NULL;
 
 void print_block(void *ptr) {
-    unsigned int* next = (unsigned int*) NEXT_BLKP(ptr);
+    unsigned int* next = (unsigned int*) get_next_block_ptr(ptr);
     printf("[%s] Addr: %p. Size: %d. Next: %p.\n",
-      GET_ALLOC(HDRP(ptr)) ? "Allocated" : "Free     ",
-      ptr, GET_SIZE(HDRP(ptr)), next);
+      is_allocated(get_header_ptr(ptr)) ? "Allocated" : "Free     ",
+      ptr, get_size(get_header_ptr(ptr)), next);
 }
 
 void heapdump() {
@@ -98,11 +99,11 @@ void heapdump() {
   // Print all blocks
   int n = 0;
   unsigned int* ptr = (unsigned int*) heap_listp;
-  while (GET_SIZE(HDRP(ptr)) > 0) {
+  while (get_size(get_header_ptr(ptr)) > 0) {
     printf("%d. ", n);
     print_block(ptr);
 
-    ptr = (unsigned int*) NEXT_BLKP(ptr);
+    ptr = (unsigned int*) get_next_block_ptr(ptr);
     n++;
   }
   printf("E. ");
@@ -112,30 +113,30 @@ void heapdump() {
 }
 
 static void *coalesce(void *bp) {
-	size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
-	size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
-	size_t size = GET_SIZE(HDRP(bp));
+	size_t prev_alloc = is_allocated(get_footer_ptr(get_prev_block_ptr(bp)));
+	size_t next_alloc = is_allocated(get_header_ptr(get_next_block_ptr(bp)));
+	size_t size = get_size(get_header_ptr(bp));
 
 	if (prev_alloc && next_alloc) {
 		return bp;
 	}
   else if (prev_alloc && !next_alloc) {
-		size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
-		PUT(HDRP(bp), PACK(size, 0));
-		PUT (FTRP(bp), PACK(size,0));
+		size += get_size(get_header_ptr(get_next_block_ptr(bp)));
+		set_val(get_header_ptr(bp), make_header(size, 0));
+		set_val (get_footer_ptr(bp), make_header(size,0));
 	}
   else if (!prev_alloc && next_alloc) {
-		size += GET_SIZE(HDRP(PREV_BLKP(bp)));
-		PUT(FTRP(bp), PACK(size, 0));
-		PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-		bp = PREV_BLKP(bp);
+		size += get_size(get_header_ptr(get_prev_block_ptr(bp)));
+		set_val(get_footer_ptr(bp), make_header(size, 0));
+		set_val(get_header_ptr(get_prev_block_ptr(bp)), make_header(size, 0));
+		bp = get_prev_block_ptr(bp);
 	}
   else {
-		size += GET_SIZE(HDRP(PREV_BLKP(bp))) +
-			GET_SIZE(FTRP(NEXT_BLKP(bp)));
-		PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-		PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
-		bp = PREV_BLKP(bp);
+		size += get_size(get_header_ptr(get_prev_block_ptr(bp))) +
+			get_size(get_footer_ptr(get_next_block_ptr(bp)));
+		set_val(get_header_ptr(get_prev_block_ptr(bp)), make_header(size, 0));
+		set_val(get_footer_ptr(get_next_block_ptr(bp)), make_header(size, 0));
+		bp = get_prev_block_ptr(bp);
 	}
 	return bp;
 }
@@ -150,9 +151,9 @@ static void *extend_heap(size_t words) {
     return NULL;
 
   /* Initialize free block header/footer and the epilogue header */
-  PUT(HDRP(bp), PACK(size, 0)); /* Free block header */
-  PUT(FTRP(bp), PACK(size, 0)); /* Free block footer */
-  PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1)); /* New epilogue header */
+  set_val(get_header_ptr(bp), make_header(size, 0)); /* Free block header */
+  set_val(get_footer_ptr(bp), make_header(size, 0)); /* Free block footer */
+  set_val(get_header_ptr(get_next_block_ptr(bp)), make_header(0, 1)); /* New epilogue header */
 
   /* Coalesce if the previous block was free */
   return coalesce(bp);
@@ -169,10 +170,10 @@ int mm_init(void)
     return -1;
   }
 
-  PUT(heap_listp, 0);                            /* Alignment padding */
-  PUT(heap_listp + (1 * WSIZE), PACK(DSIZE, 1)); /* Prologue header */
-  PUT(heap_listp + (2 * WSIZE), PACK(DSIZE, 1)); /* Prologue footer */
-  PUT(heap_listp + (3 * WSIZE), PACK(0, 1));     /* Epilogue header */
+  set_val(heap_listp, 0);                            /* Alignment padding */
+  set_val(heap_listp + (1 * WSIZE), make_header(DSIZE, 1)); /* Prologue header */
+  set_val(heap_listp + (2 * WSIZE), make_header(DSIZE, 1)); /* Prologue footer */
+  set_val(heap_listp + (3 * WSIZE), make_header(0, 1));     /* Epilogue header */
 
   heap_listp += (2 * WSIZE); // Start heap at prologue footer
 
@@ -189,33 +190,33 @@ static void *find_fit(size_t size) {
   void *ptr = heap_listp;
 
   // All blocks are at least 1 in size except the epilogue (end of heap)
-  while (GET_SIZE(HDRP(ptr)) > 0) {
-    if (!GET_ALLOC(HDRP(ptr)) && GET_SIZE(HDRP(ptr)) >= size) {
+  while (get_size(get_header_ptr(ptr)) > 0) {
+    if (is_free(get_header_ptr(ptr)) && get_size(get_header_ptr(ptr)) >= size) {
       return ptr;
     }
 
-    ptr = NEXT_BLKP(ptr);
+    ptr = get_next_block_ptr(ptr);
   }
 
   return NULL;
 }
 
 static void place(void *ptr, size_t size) {
-  size_t cur_size = GET_SIZE(HDRP(ptr));
+  size_t cur_size = get_size(get_header_ptr(ptr));
   size_t remaining_size = cur_size - size;
 
   // There is space for another block, so we split
   if (remaining_size >= MIN_BLOCK_SIZE) {
-    PUT(HDRP(ptr), PACK(size, 1));
-    PUT(FTRP(ptr), PACK(size, 1));
+    set_val(get_header_ptr(ptr), make_header(size, 1));
+    set_val(get_footer_ptr(ptr), make_header(size, 1));
 
-    PUT(HDRP(NEXT_BLKP(ptr)), PACK(remaining_size, 0));
-    PUT(FTRP(NEXT_BLKP(ptr)), PACK(remaining_size, 0));
+    set_val(get_header_ptr(get_next_block_ptr(ptr)), make_header(remaining_size, 0));
+    set_val(get_footer_ptr(get_next_block_ptr(ptr)), make_header(remaining_size, 0));
   }
   // There is not space for another block, so we don't split
   else {
-    PUT(HDRP(ptr), PACK(cur_size, 1));
-    PUT(FTRP(ptr), PACK(cur_size, 1));
+    set_val(get_header_ptr(ptr), make_header(cur_size, 1));
+    set_val(get_footer_ptr(ptr), make_header(cur_size, 1));
   }
 }
 
@@ -245,7 +246,7 @@ void *mm_malloc(size_t size) {
 	}
 
 	/* No fit found. Get more memory and place the block */
-	extendsize = MAX(asize, CHUNKSIZE);
+	extendsize = max(asize, CHUNKSIZE);
 	if ((bp = extend_heap(extendsize / WSIZE)) == NULL)
 	  return NULL;
 
@@ -259,10 +260,10 @@ void *mm_malloc(size_t size) {
  */
 void mm_free(void *ptr)
 {
-  size_t size = GET_SIZE(HDRP(ptr));
+  size_t size = get_size(get_header_ptr(ptr));
 
-  PUT(HDRP(ptr), PACK(size, 0));
-  PUT(FTRP(ptr), PACK(size, 0));
+  set_val(get_header_ptr(ptr), make_header(size, 0));
+  set_val(get_footer_ptr(ptr), make_header(size, 0));
 
   coalesce(ptr);
 }
