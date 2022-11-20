@@ -67,6 +67,11 @@ team_t team = {
 #define here (printf("%s:%d - %s\n", __FILE__, __LINE__, __func__))
 #define dbg(val) printf("%s = 0x%x\n", #val, (unsigned int)val);
 
+// Given a block pointer to a free block, get the free block it points to as the next one
+#define get_next_free_block_ptr(block_ptr) ((void *)get_val(block_ptr))
+// Given a block pointer to a free block, get the free block it points to as the previous one
+#define get_prev_free_block_ptr(block_ptr) ((void *)get_val((char *)(block_ptr) + WSIZE))
+
 /*
  * Given the size of the data, calculates how many bytes are needed to store the
  * block:
@@ -81,9 +86,14 @@ team_t team = {
 /* Private functions in this file */
 static void *coalesce(void *bp);
 static void *extend_heap(size_t words);
+static void *find_fit(size_t size);
 static void place(void *ptr, size_t size);
 static void heapdump();
 static void mm_check();
+static void set_next_free_block_ptr(void *block_ptr, void *next);
+static void set_prev_free_block_ptr(void *block_ptr, void *prev);
+static void add_to_free_list(void *block_ptr);
+static void remove_from_free_list(void *block_ptr);
 
 /* Global (private) variables */
 static void *heap_ptr = NULL;
@@ -117,11 +127,8 @@ int mm_init(void)
 
     // Start free list at the new block we got after extending the heap
     free_list = first_real_block_ptr;
-    // Set the initial payload (pointer to next free item) to NULL
-    set_val(free_list, 0);
-
-    here;
-    heapdump();
+    set_next_free_block_ptr(free_list, 0);
+    set_prev_free_block_ptr(free_list, 0);
 
     return 0;
 }
@@ -132,8 +139,6 @@ int mm_init(void)
  */
 void *mm_malloc(size_t size)
 {
-    printf("Allocate %d bytes\n", size);
-
     // Ignore spurious requests
     if (size == 0)
         return NULL;
@@ -143,25 +148,11 @@ void *mm_malloc(size_t size)
     size_t block_size = calc_block_size(size);
 
     // Search for a fitting block
-    void *block_ptr = free_list;
-    void *prev_free_block_ptr = NULL;
-    while (block_ptr != NULL)
-    {
-        if (get_size(get_header_ptr(block_ptr)) >= size)
-            break;
-
-        // Travel to the next free item, whose pointer is stored as the payload
-        prev_free_block_ptr = block_ptr;
-        block_ptr = (void *)get_val(block_ptr);
-    }
+    void *block_ptr = find_fit(block_size);
 
     if (block_ptr != NULL)
     {
-        // Make the previous free block point to the next free block
-        if (prev_free_block_ptr != NULL)
-            set_val(prev_free_block_ptr, get_val(block_ptr));
-        else
-            free_list = get_val(block_ptr);
+        remove_from_free_list(block_ptr);
 
         place(block_ptr, block_size);
 
@@ -173,33 +164,7 @@ void *mm_malloc(size_t size)
     if ((block_ptr = extend_heap(extend_size / WSIZE)) == NULL)
         return NULL;
 
-    here;
-    heapdump();
-
-    dbg(prev_free_block_ptr);
-    dbg(free_list);
-    dbg(block_ptr);
-
-    void *free_block_ptr = free_list;
-    printf("\n");
-    while (free_block_ptr != NULL)
-    {
-        printf("cmp %p == %p\n", block_ptr, get_val(free_block_ptr));
-        if (block_ptr == get_val(free_block_ptr))
-        {
-            printf("Parent to %p found at %p\n", block_ptr, free_block_ptr);
-        }
-
-        free_block_ptr = (void *)get_val(free_block_ptr);
-    }
-    printf("\n");
-
     place(block_ptr, block_size);
-
-    here;
-    heapdump();
-
-    exit(1);
 
     return block_ptr;
 }
@@ -209,12 +174,12 @@ void *mm_malloc(size_t size)
  */
 void mm_free(void *ptr)
 {
-    here;
-
     size_t size = get_size(get_header_ptr(ptr));
 
     set_val(get_header_ptr(ptr), make_header(size, 0));
     set_val(get_footer_ptr(ptr), make_header(size, 0));
+
+    add_to_free_list(ptr);
 
     coalesce(ptr);
 }
@@ -240,14 +205,28 @@ void *mm_realloc(void *ptr, size_t size)
 }
 
 /*
+ * Search for a block on the free list of at least the given size. Uses first-fit search.
+ */
+static void *find_fit(size_t size)
+{
+    void *block_ptr = free_list;
+    while (block_ptr != NULL)
+    {
+        if (get_size(get_header_ptr(block_ptr)) >= size)
+            return block_ptr;
+
+        block_ptr = get_next_free_block_ptr(block_ptr);
+    }
+
+    return NULL;
+}
+
+/*
  * Places a block at the given block pointer. If the placed block leaves space
  * for another block after it, the existing block will be split in two.
  */
 static void place(void *ptr, size_t size)
 {
-    here;
-    dbg(ptr);
-
     size_t cur_size = get_size(get_header_ptr(ptr));
     size_t remaining_size = cur_size - size;
 
@@ -261,11 +240,9 @@ static void place(void *ptr, size_t size)
         set_val(get_header_ptr(next_block_ptr), make_header(remaining_size, 0));
         set_val(get_footer_ptr(next_block_ptr), make_header(remaining_size, 0));
 
-        dbg(next_block_ptr);
-        dbg(free_list);
-
         // Add the next block to the free list
-        set_val(next_block_ptr, free_list);
+        set_next_free_block_ptr(next_block_ptr, get_next_free_block_ptr(ptr));
+        set_prev_free_block_ptr(next_block_ptr, get_prev_free_block_ptr(ptr));
         free_list = next_block_ptr;
     }
     // There is not space for another block, so we don't split
@@ -274,8 +251,6 @@ static void place(void *ptr, size_t size)
         set_val(get_header_ptr(ptr), make_header(cur_size, 1));
         set_val(get_footer_ptr(ptr), make_header(cur_size, 1));
     }
-
-    here;
 }
 
 /* Increases the size of the heap with the given number of words */
@@ -294,20 +269,34 @@ static void *extend_heap(size_t words)
     set_val(get_footer_ptr(bp), make_header(size, 0));                  /* Free block footer */
     set_val(get_header_ptr(get_next_block_ptr(bp)), make_header(0, 1)); /* New epilogue header */
 
+    add_to_free_list(bp);
+
     /* Coalesce if the previous block was free */
     return coalesce(bp);
 }
 
+/*
+ * Coalesces adjacent free blocks into a single free block.
+ *
+ * If an encountered block is marked as free, that block MUST ne on the free list.
+ */
 static void *coalesce(void *bp)
 {
     size_t prev_alloc = is_allocated(get_footer_ptr(get_prev_block_ptr(bp)));
     size_t next_alloc = is_allocated(get_header_ptr(get_next_block_ptr(bp)));
     size_t size = get_size(get_header_ptr(bp));
 
+    if (!next_alloc)
+        remove_from_free_list(get_next_block_ptr(bp));
+    if (!prev_alloc)
+        remove_from_free_list(get_prev_block_ptr(bp));
+    if (is_free(get_header_ptr(bp)))
+        remove_from_free_list(bp);
+
     // When no surrounding blocks are free, we cannot coalesce
     if (prev_alloc && next_alloc)
     {
-        return bp;
+        // Do nothing
     }
     // When only the next block is free
     else if (prev_alloc && !next_alloc)
@@ -333,7 +322,52 @@ static void *coalesce(void *bp)
         set_val(get_footer_ptr(get_next_block_ptr(bp)), make_header(size, 0));
         bp = get_prev_block_ptr(bp);
     }
+
+    add_to_free_list(bp);
+
     return bp;
+}
+
+/* Utilities */
+static void set_next_free_block_ptr(void *block_ptr, void *next)
+{
+    if (block_ptr == NULL)
+        return;
+
+    set_val(block_ptr, (unsigned int)next);
+}
+
+static void set_prev_free_block_ptr(void *block_ptr, void *next)
+{
+    if (block_ptr == NULL)
+        return;
+
+    set_val((char *)(block_ptr) + WSIZE, (unsigned int)next);
+}
+
+static void add_to_free_list(void *block_ptr)
+{
+    set_next_free_block_ptr(block_ptr, free_list);
+    set_prev_free_block_ptr(free_list, block_ptr);
+    set_prev_free_block_ptr(block_ptr, NULL);
+    free_list = block_ptr;
+}
+
+static void remove_from_free_list(void *block_ptr)
+{
+    void *prev = get_prev_free_block_ptr(block_ptr);
+    void *next = get_next_free_block_ptr(block_ptr);
+
+    if (prev != NULL)
+    {
+        set_next_free_block_ptr(prev, next);
+        set_prev_free_block_ptr(next, prev);
+    }
+    else
+    {
+        set_prev_free_block_ptr(next, NULL);
+        free_list = next;
+    }
 }
 
 /* Debugging utilities */
@@ -347,9 +381,12 @@ static void print_block(void *ptr)
 
 static void print_free_block(void *ptr)
 {
-    printf("[%s] Addr: %p. Size: %d. Payload: %p.\n",
-           is_allocated(get_header_ptr(ptr)) ? "Allocated" : "Free     ",
-           ptr, get_size(get_header_ptr(ptr)), (void *)get_val(ptr));
+    printf("[%s] Addr: %p. Size: %d. prev->%p. next->%p.\n",
+           is_allocated(get_header_ptr(ptr)) ? "Allocated" : "Free",
+           ptr,
+           get_size(get_header_ptr(ptr)),
+           (void *)get_prev_free_block_ptr(ptr),
+           (void *)get_next_free_block_ptr(ptr));
 }
 
 static void heapdump()
@@ -371,7 +408,6 @@ static void heapdump()
     {
         printf("%d. ", n);
         print_block(ptr);
-
         ptr = (unsigned int *)get_next_block_ptr(ptr);
         n++;
     }
@@ -394,6 +430,9 @@ static void heapdump()
 
 static void mm_check()
 {
+    int num_nil_prev = 0;
+    int num_nil_next = 0;
+
     void *block_ptr = free_list;
     while (block_ptr != NULL)
     {
@@ -403,6 +442,26 @@ static void mm_check()
             print_block(block_ptr);
         }
 
+        if (is_free(get_header_ptr(block_ptr)))
+        {
+            void *np = get_next_free_block_ptr(block_ptr);
+            void *pp = get_prev_free_block_ptr(block_ptr);
+            if (np != NULL && (np < mem_heap_lo() || np > mem_heap_hi()))
+                printf("ILLEGAL: found free list next reference pointing outside the heap\n");
+            if (pp != NULL && (pp < mem_heap_lo() || pp > mem_heap_hi()))
+                printf("ILLEGAL: found free list prev reference pointing outside the heap\n");
+
+            if (np == NULL)
+                num_nil_next++;
+            if (pp == NULL)
+                num_nil_prev++;
+        }
+
         block_ptr = (void *)get_val(block_ptr);
     }
+
+    if (num_nil_prev > 1)
+        printf("ILLEGAL: found more than one item on the free list with a NULL prev reference\n");
+    if (num_nil_next > 1)
+        printf("ILLEGAL: found more than one item on the free list with a NULL next reference\n");
 }
