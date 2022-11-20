@@ -246,16 +246,19 @@ static void *coalesce(void *bp)
     size_t next_alloc = is_allocated(get_header_ptr(get_next_block_ptr(bp)));
     size_t size = get_size(get_header_ptr(bp));
 
+    // When no surrounding blocks are free, we cannot coalesce
     if (prev_alloc && next_alloc)
     {
         return bp;
     }
+    // When only the next block is free
     else if (prev_alloc && !next_alloc)
     {
         size += get_size(get_header_ptr(get_next_block_ptr(bp)));
         set_val(get_header_ptr(bp), make_header(size, 0));
         set_val(get_footer_ptr(bp), make_header(size, 0));
     }
+    // When only the previous block is free
     else if (!prev_alloc && next_alloc)
     {
         size += get_size(get_header_ptr(get_prev_block_ptr(bp)));
@@ -263,6 +266,7 @@ static void *coalesce(void *bp)
         set_val(get_header_ptr(get_prev_block_ptr(bp)), make_header(size, 0));
         bp = get_prev_block_ptr(bp);
     }
+    // When both surrounding blocks are free
     else
     {
         size += get_size(get_header_ptr(get_prev_block_ptr(bp))) +
