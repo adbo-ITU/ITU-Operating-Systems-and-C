@@ -433,6 +433,12 @@ static void mm_check()
     int num_nil_prev = 0;
     int num_nil_next = 0;
 
+    if (free_list != NULL && get_prev_free_block_ptr(free_list) != NULL)
+    {
+        printf("ILLEGAL: free list points to block with non-null previous element\n");
+        exit(1);
+    }
+
     void *block_ptr = free_list;
     while (block_ptr != NULL)
     {
@@ -440,6 +446,7 @@ static void mm_check()
         {
             printf("ILLEGAL: allocated block detected on free list:\n   ");
             print_block(block_ptr);
+            exit(1);
         }
 
         if (is_free(get_header_ptr(block_ptr)))
@@ -447,9 +454,15 @@ static void mm_check()
             void *np = get_next_free_block_ptr(block_ptr);
             void *pp = get_prev_free_block_ptr(block_ptr);
             if (np != NULL && (np < mem_heap_lo() || np > mem_heap_hi()))
+            {
                 printf("ILLEGAL: found free list next reference pointing outside the heap\n");
+                exit(1);
+            }
             if (pp != NULL && (pp < mem_heap_lo() || pp > mem_heap_hi()))
+            {
                 printf("ILLEGAL: found free list prev reference pointing outside the heap\n");
+                exit(1);
+            }
 
             if (np == NULL)
                 num_nil_next++;
@@ -461,7 +474,13 @@ static void mm_check()
     }
 
     if (num_nil_prev > 1)
+    {
         printf("ILLEGAL: found more than one item on the free list with a NULL prev reference\n");
+        exit(1);
+    }
     if (num_nil_next > 1)
+    {
         printf("ILLEGAL: found more than one item on the free list with a NULL next reference\n");
+        exit(1);
+    }
 }
