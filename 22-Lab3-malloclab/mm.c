@@ -1,13 +1,27 @@
 /*
- * mm-naive.c - The fastest, least memory-efficient malloc package.
+ * Keywords: header, footer, explicit free list
  *
- * In this naive approach, a block is allocated by simply incrementing
- * the brk pointer.  A block is pure payload. There are no headers or
- * footers.  Blocks are never coalesced or reused. Realloc is
- * implemented directly using mm_malloc and mm_free.
+ * This dynamic memory allocator uses an explicit free list to manage free
+ * blocks in the heap. Each block is 8-byte (double word) aligned and consists
+ * of a header, footer, and payload. Each block will have the following layout:
  *
- * NOTE TO STUDENTS: Replace this header comment with your own header
- * comment that gives a high level description of your solution.
+ *    <HEADER  - 4 bytes>
+ *    <PAYLOAD - N bytes, 8-byte aligned>
+ *    <FOOTER  - 4 bytes>
+ *
+ * The value of the header will consist of the block's size and a flag
+ * indicating if the block is allocated or free. This flag is encoded in the
+ * least significant bit. Since each block size is a multiple of 8, this bit
+ * will always be 0.
+ *
+ * The footer is a duplicate of the header, but it only exists for free blocks.
+ *
+ * A pointer to the block points to the first byte of the payload, not the
+ * header.
+ *
+ * For allocated blocks, the payload is where the user's data is written to.
+ * For free blocks, we use two words in the payload to store pointers to the
+ * next and previous free blocks.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,10 +32,6 @@
 #include "mm.h"
 #include "memlib.h"
 
-/*********************************************************
- * NOTE TO STUDENTS: Before you do anything else, please
- * provide your team information in the following struct.
- ********************************************************/
 team_t team = {
     /* Team name */
     "adbo",
@@ -63,13 +73,14 @@ team_t team = {
 #define get_next_block_ptr(block_ptr) ((char *)(block_ptr) + get_size(get_header_ptr(block_ptr)))
 #define get_prev_block_ptr(block_ptr) ((char *)(block_ptr)-get_size(((char *)(block_ptr)-DSIZE)))
 
-#define here (printf("%s:%d - %s\n", __FILE__, __LINE__, __func__))
-#define dbg(val) printf("%s = 0x%x\n", #val, (unsigned int)val);
-
 // Given a block pointer to a free block, get the free block it points to as the next one
 #define get_next_free_block_ptr(block_ptr) ((void *)get_val(block_ptr))
 // Given a block pointer to a free block, get the free block it points to as the previous one
 #define get_prev_free_block_ptr(block_ptr) ((void *)get_val((char *)(block_ptr) + WSIZE))
+
+// Macros for debugging
+#define here (printf("%s:%d - %s\n", __FILE__, __LINE__, __func__))
+#define dbg(val) printf("%s = 0x%x\n", #val, (unsigned int)val);
 
 /*
  * Given the size of the data, calculates how many bytes are needed to store the
@@ -88,8 +99,6 @@ static void *coalesce(void *bp);
 static void *extend_heap(size_t words);
 static void *find_fit(size_t size);
 static void place(void *ptr, size_t size);
-static void heapdump();
-static void mm_check();
 static void set_next_free_block_ptr(void *block_ptr, void *next);
 static void set_prev_free_block_ptr(void *block_ptr, void *prev);
 static void add_to_free_list(void *block_ptr);
@@ -157,7 +166,11 @@ void *mm_malloc(size_t size)
         block_ptr = extend_heap(extend_size / WSIZE);
     }
 
+    // The block is now allocated, so we remove it from the free list
     remove_from_free_list(block_ptr);
+
+    // Write the header and footer to the heap (and split the block if there is
+    // space left over)
     place(block_ptr, block_size);
 
     return block_ptr;
@@ -170,11 +183,15 @@ void mm_free(void *ptr)
 {
     size_t size = get_size(get_header_ptr(ptr));
 
+    // Update the block and footer allocation flags
     set_val(get_header_ptr(ptr), make_header(size, 0));
     set_val(get_footer_ptr(ptr), make_header(size, 0));
 
+    // The block is now free, so we add it to the free list
     add_to_free_list(ptr);
 
+    // Since this is a newly freed block, there may be adjacent free blocks that
+    // it can be merged with
     coalesce(ptr);
 }
 
@@ -209,6 +226,8 @@ void *mm_realloc(void *ptr, size_t size)
 
     void *next_block_ptr = get_next_block_ptr(ptr);
 
+    // If the next block is free, we check to see if the current block can be
+    // extended into the next block so we can avoid allocating new memory.
     if (is_free(get_header_ptr(next_block_ptr)))
     {
         size_t next_block_size = get_size(get_header_ptr(next_block_ptr));
@@ -319,6 +338,8 @@ static void *coalesce(void *bp)
     size_t next_alloc = is_allocated(get_header_ptr(get_next_block_ptr(bp)));
     size_t size = get_size(get_header_ptr(bp));
 
+    // We will add the block to the free list at the end, so we ensure that it
+    // isn't on the free list here
     if (!next_alloc)
         remove_from_free_list(get_next_block_ptr(bp));
     if (!prev_alloc)
@@ -356,6 +377,8 @@ static void *coalesce(void *bp)
         bp = get_prev_block_ptr(bp);
     }
 
+    // Whichever block we ended up with, it's free and needs to be added to the
+    // free list
     add_to_free_list(bp);
 
     return bp;
