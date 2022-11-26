@@ -81,6 +81,7 @@ team_t team = {
 #define calc_block_size(data_size) (WSIZE + WSIZE + align(data_size));
 
 #define max(x, y) ((x) > (y) ? (x) : (y))
+#define min(x, y) ((x) < (y) ? (x) : (y))
 
 /* Private functions in this file */
 static void *coalesce(void *bp);
@@ -154,8 +155,6 @@ void *mm_malloc(size_t size)
         // No fit found. Get more memory.
         size_t extend_size = max(block_size, CHUNKSIZE);
         block_ptr = extend_heap(extend_size / WSIZE);
-        if (block_ptr == NULL)
-            return NULL;
     }
 
     remove_from_free_list(block_ptr);
@@ -184,19 +183,38 @@ void mm_free(void *ptr)
  */
 void *mm_realloc(void *ptr, size_t size)
 {
-    void *oldptr = ptr;
-    void *newptr;
-    size_t copySize;
-
-    newptr = mm_malloc(size);
-    if (newptr == NULL)
+    // If the output size is 0, then this is just free
+    if (size == 0)
+    {
+        mm_free(ptr);
         return NULL;
-    copySize = *(size_t *)((char *)oldptr - SIZE_T_SIZE);
-    if (size < copySize)
-        copySize = size;
-    memcpy(newptr, oldptr, copySize);
-    mm_free(oldptr);
-    return newptr;
+    }
+
+    // If the given pointer is NULL, then this is just malloc
+    if (ptr == NULL)
+        return mm_malloc(size);
+
+    size_t cur_block_size = get_size(get_header_ptr(ptr));
+    size_t required_block_size = calc_block_size(size);
+
+    // If the current block can already fit the new size, just reuse it
+    if (cur_block_size >= required_block_size)
+        return ptr;
+
+    // Allocate a completely new block of the new size
+    void *new_ptr = mm_malloc(size);
+
+    // If realloc() fails the original block is left untouched
+    if (new_ptr == NULL)
+        return NULL;
+
+    // Copy the old data
+    memcpy(new_ptr, ptr, min(cur_block_size, size));
+
+    // Free the old block.
+    mm_free(ptr);
+
+    return new_ptr;
 }
 
 /*
@@ -367,9 +385,14 @@ static void remove_from_free_list(void *block_ptr)
 static void print_block(void *ptr)
 {
     unsigned int *next = (unsigned int *)get_next_block_ptr(ptr);
+    unsigned int *prev = (unsigned int *)get_prev_block_ptr(ptr);
     printf("[%s] Addr: %p. Size: %d. Next: %p.\n",
            is_allocated(get_header_ptr(ptr)) ? "Allocated" : "Free     ",
            ptr, get_size(get_header_ptr(ptr)), next);
+    if (get_size(get_header_ptr(ptr)) > 0)
+        printf("  F[%s] Addr: %p. Size: %d. Prev: %p.\n\n",
+               is_allocated(get_footer_ptr(ptr)) ? "Allocated" : "Free     ",
+               ptr, get_size(get_footer_ptr(ptr)), prev);
 }
 
 static void print_free_block(void *ptr)
