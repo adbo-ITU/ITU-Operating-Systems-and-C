@@ -385,14 +385,15 @@ static void remove_from_free_list(void *block_ptr)
 static void print_block(void *ptr)
 {
     unsigned int *next = (unsigned int *)get_next_block_ptr(ptr);
-    unsigned int *prev = (unsigned int *)get_prev_block_ptr(ptr);
     printf("[%s] Addr: %p. Size: %d. Next: %p.\n",
            is_allocated(get_header_ptr(ptr)) ? "Allocated" : "Free     ",
            ptr, get_size(get_header_ptr(ptr)), next);
-    if (get_size(get_header_ptr(ptr)) > 0)
-        printf("  F[%s] Addr: %p. Size: %d. Prev: %p.\n\n",
-               is_allocated(get_footer_ptr(ptr)) ? "Allocated" : "Free     ",
-               ptr, get_size(get_footer_ptr(ptr)), prev);
+    // Uncomment this to print information from the footer
+    // unsigned int *prev = (unsigned int *)get_prev_block_ptr(ptr);
+    // if (get_size(get_header_ptr(ptr)) > 0)
+    //     printf("  F[%s] Addr: %p. Size: %d. Prev: %p.\n\n",
+    //            is_allocated(get_footer_ptr(ptr)) ? "Allocated" : "Free     ",
+    //            ptr, get_size(get_footer_ptr(ptr)), prev);
 }
 
 static void print_free_block(void *ptr)
