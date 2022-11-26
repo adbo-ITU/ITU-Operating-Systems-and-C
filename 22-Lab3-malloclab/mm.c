@@ -198,8 +198,30 @@ void *mm_realloc(void *ptr, size_t size)
     size_t required_block_size = calc_block_size(size);
 
     // If the current block can already fit the new size, just reuse it
-    if (cur_block_size >= required_block_size)
+    if (required_block_size <= cur_block_size)
+    {
+        // I implemented shrinking the current block and splitting it, but the
+        // test cases don't trigger that scenario. I'll avoid putting untested
+        // code here.
+
         return ptr;
+    }
+
+    void *next_block_ptr = get_next_block_ptr(ptr);
+
+    if (is_free(get_header_ptr(next_block_ptr)))
+    {
+        size_t next_block_size = get_size(get_header_ptr(next_block_ptr));
+        size_t combined_size = cur_block_size + next_block_size;
+
+        if (combined_size >= required_block_size)
+        {
+            remove_from_free_list(next_block_ptr);
+            set_val(get_header_ptr(ptr), make_header(combined_size, 1));
+            place(ptr, required_block_size);
+            return ptr;
+        }
+    }
 
     // Allocate a completely new block of the new size
     void *new_ptr = mm_malloc(size);
