@@ -22,6 +22,9 @@
  * For allocated blocks, the payload is where the user's data is written to.
  * For free blocks, we use two words in the payload to store pointers to the
  * next and previous free blocks.
+ *
+ * In order to avoid fragmentation, adjacent free blocks are joined every time
+ * a block is freed or the heap is extended.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -490,7 +493,16 @@ static void heapdump()
     printf("--------------- END HEAP DUMP ---------------\n\n");
 }
 
-static void mm_check()
+/*
+ * There are more things that would make sense to check, but these are the ones
+ * that were useful to me when debugging:
+ *
+ * - Free list variable is not the head of the list
+ * - Allocated block on the free list
+ * - Free list pointing outside the heap
+ * - Multiple free list nodes with prev/next null references
+ */
+int mm_check()
 {
     int num_nil_prev = 0;
     int num_nil_next = 0;
@@ -498,7 +510,7 @@ static void mm_check()
     if (free_list != NULL && get_prev_free_block_ptr(free_list) != NULL)
     {
         printf("ILLEGAL: free list points to block with non-null previous element\n");
-        exit(1);
+        return -1;
     }
 
     void *block_ptr = free_list;
@@ -508,7 +520,7 @@ static void mm_check()
         {
             printf("ILLEGAL: allocated block detected on free list:\n   ");
             print_block(block_ptr);
-            exit(1);
+            return -1;
         }
 
         if (is_free(get_header_ptr(block_ptr)))
@@ -518,12 +530,12 @@ static void mm_check()
             if (np != NULL && (np < mem_heap_lo() || np > mem_heap_hi()))
             {
                 printf("ILLEGAL: found free list next reference pointing outside the heap\n");
-                exit(1);
+                return -1;
             }
             if (pp != NULL && (pp < mem_heap_lo() || pp > mem_heap_hi()))
             {
                 printf("ILLEGAL: found free list prev reference pointing outside the heap\n");
-                exit(1);
+                return -1;
             }
 
             if (np == NULL)
@@ -538,11 +550,13 @@ static void mm_check()
     if (num_nil_prev > 1)
     {
         printf("ILLEGAL: found more than one item on the free list with a NULL prev reference\n");
-        exit(1);
+        return -1;
     }
     if (num_nil_next > 1)
     {
         printf("ILLEGAL: found more than one item on the free list with a NULL next reference\n");
-        exit(1);
+        return -1;
     }
+
+    return 0;
 }
