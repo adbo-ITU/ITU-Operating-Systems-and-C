@@ -38,7 +38,6 @@ team_t team = {
 #define ALIGNMENT 8
 /* rounds up to the nearest multiple of ALIGNMENT */
 #define align(size) (((size) + (ALIGNMENT - 1)) & ~0x7)
-#define SIZE_T_SIZE (align(sizeof(size_t)))
 
 #define WSIZE 4             /* Word and header/footer size (bytes) */
 #define DSIZE 8             /* Double word size (bytes) */
