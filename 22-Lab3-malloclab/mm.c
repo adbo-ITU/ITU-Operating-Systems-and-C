@@ -61,7 +61,7 @@ team_t team = {
 
 /* Given block ptr bp, compute address of next and previous blocks */
 #define get_next_block_ptr(block_ptr) ((char *)(block_ptr) + get_size(get_header_ptr(block_ptr)))
-#define get_prev_block_ptr(block_ptr) ((char *)(block_ptr)-get_size(((char *)(bp)-DSIZE)))
+#define get_prev_block_ptr(block_ptr) ((char *)(block_ptr)-get_size(((char *)(block_ptr)-DSIZE)))
 
 #define here (printf("%s:%d - %s\n", __FILE__, __LINE__, __func__))
 #define dbg(val) printf("%s = 0x%x\n", #val, (unsigned int)val);
