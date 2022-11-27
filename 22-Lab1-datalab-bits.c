@@ -1,7 +1,7 @@
 /* 
  * CS:APP Data Lab 
  * 
- * <Please put your name and userid here>
+ * Adrian Borup, adbo
  * 
  * bits.c - Source file with your solutions to the Lab.
  *          This is the file you will hand in to your instructor.
@@ -178,7 +178,15 @@ NOTES:
  *   Rating: 1
  */
 int bitXor(int x, int y) {
-  return 2;
+  // Set all positions where x and y both have a 1 to 0 (and the rest to a 1)
+  int bothMask = ~(x & y);
+
+  // Set all positions where x and y both have a 0 to 0 (and the rest to a 1)
+  int neitherMask = ~(~x & ~y);
+
+  // This AND will thus give us all bits where bit pairs of x and y were not
+  // both 1 and not both 0
+  return bothMask & neitherMask;
 }
 /* 
  * tmin - return minimum two's complement integer 
@@ -187,7 +195,9 @@ int bitXor(int x, int y) {
  *   Rating: 1
  */
 int tmin(void) {
-  return 2;
+  // By two's complement, the smallest number starts with a 1 followed by 0s
+  // only. Thus we can just shift a 1 to the most significant bit's position.
+  return 1 << 31;
 }
 //2
 /* 
@@ -199,7 +209,18 @@ int tmin(void) {
  *   Rating: 2
  */
 int allOddBits(int x) {
-  return 2;
+  // Define the pattern to check against - 170 is the decimal form of the
+  // bits 10101010
+  int pattern = 170; 
+
+  // If the pattern can be AND'ed with each chunk of 8 bits in the 32-bit number
+  // without losing a single 1, the pattern is matched.
+  int mask = pattern & (x >> 24) & (x >> 16) & (x >> 8) & x;
+
+  // If the pattern didn't lose a single 1, then mask = pattern and their XOR
+  // becomes 0. Thus a 1 is returned. However, if the pattern did lose a 1,
+  // mask != pattern and the XOR is non-zero, resulting in returning 0.
+  return !(mask ^ pattern);
 }
 /* 
  * negate - return -x 
@@ -209,7 +230,7 @@ int allOddBits(int x) {
  *   Rating: 2
  */
 int negate(int x) {
-  return 2;
+  return ~x + 1;
 }
 //3
 /* 
@@ -220,7 +241,17 @@ int negate(int x) {
  *   Rating: 3
  */
 int conditional(int x, int y, int z) {
-  return 2;
+  // We obtain a 0 for any non-zero x and a 1 if x = 0
+  int normalised = !x;
+
+  // Using negation and overflow, we turn normalised into a number with all
+  // bits set either to 1 or 0. 0 becomes all 0s and 1 becomes all 1s.
+  int mask = ~normalised + 1;
+
+  // If x was truthy, ~mask will be a bit string with only 1s - therefore we
+  // retain all bits of y. But mask will be the bit string with only 0s, thus
+  // all bits of z are discarded. And the other way around if x was falsy.
+  return (~mask & y) | (mask & z);
 }
 /* 
  * isLessOrEqual - if x <= y  then return 1, else return 0 
@@ -230,7 +261,33 @@ int conditional(int x, int y, int z) {
  *   Rating: 3
  */
 int isLessOrEqual(int x, int y) {
-  return 2;
+  // We can determine if a number is smaller or equal to another with this:
+  //    x <= y if y - x >= 0
+  // However, due to overflow, we have to check some cases where we can avoid
+  // doing arithmetic:
+  //  - If x is negative and y is positive the answer is always 1
+  //  - If y is negative and x is positive the answer is always 0
+
+  // First we find y - x (by implementing subtraction as adding the negation)
+  int diff = y + (~x + 1);
+  // Then we determine if the sign bit is 1 (indicating a negative number)
+  int diffIsNegative = 1 & (diff >> 31);
+  // If the difference is not negative, it must be because x <= y.
+  int isLessThan = !diffIsNegative;
+
+  // And now, to avoid some overflow issues, we handle the cases described at
+  // beginning. First we determine if the signs of x and y are different by
+  // XOR'ing their sign bits:
+  int isDifferentSign = 1 & ((x >> 31) ^ (y >> 31));
+  // Then check if we are dealing with a negative x or negative y:
+  int isNegAndPos = isDifferentSign & (x >> 31);
+  int isPosAndNeg = isDifferentSign & (y >> 31);
+
+  // Finally, we can produce our answer:
+  //  - If x is positive and y is negative, the result will be forced to a 0
+  //  - If x is negative and y is positive, the answer will be OR'ed to have a 1
+  //  - Otherwise we just use the result of our arithmetic check
+  return (isNegAndPos | isLessThan) & (!isPosAndNeg);
 }
 //4
 /* 
@@ -242,7 +299,14 @@ int isLessOrEqual(int x, int y) {
  *   Rating: 4 
  */
 int logicalNeg(int x) {
-  return 2;
+  // First, we convert x from a number to its corresponding boolean 1 or 0. We
+  // do this by finding the sign bit of x and then the sign bit of x's negation.
+  // Only 0 will have no 1 in the sign bit in both cases.
+  int truthy = (x >> 31) | ((~x + 1) >> 31);
+
+  // And of course, we need the negation step too - and we only want the last
+  // bit.
+  return (~truthy) & 1;
 }
 /* howManyBits - return the minimum number of bits required to represent x in
  *             two's complement
@@ -257,5 +321,76 @@ int logicalNeg(int x) {
  *  Rating: 4
  */
 int howManyBits(int x) {
-  return 0;
+  // The general idea:
+  // - Find the absolute value
+  // - How many bits are required to represent that value?
+  // - 1 more bit is needed for the sign
+
+  // We find the absolute value of x. However, to avoid overflow issues with
+  // -2147483648, we will have to subtract 1 from the absolute value if x is
+  // negative - but the result we're looking for will be equally viable since
+  // 0 is the most significant bit for positive two's complement numbers.
+  int absMask = ~(1 & (x >> 31)) + 1;
+  int abs = (~absMask & x) | (absMask & ~x);
+
+  // We can now count how many bits we need to represent the unsigned number.
+  // Due to the limited amount of operations we have at our disposal, we can't
+  // search the 32 bits linearly - instead we use a binary search.
+  //
+  // The algorithm is as follows:
+  //   1. Take a half-of-the-bits sized chunk out of the number - initially 16
+  //      bits because the full number is 32 bits. That is, we will be looking
+  //      at these bits first:
+  //
+  //          00000000 00000000 00000000 00000000
+  //          ^^^^^^^^ ^^^^^^^^
+  //
+  //   2. Use !! to see if the bit chunk is nonzero
+  int hasBits1 = !!(abs >> 16);
+  //   3. Shift to the left by 4 (because 1 << 4 = 16, which is what we shifted
+  //      right by). If there were any bits in the chunk, res1 now holds 16 as
+  //      its value, but if no bits were present, its value is 0. If a bit was
+  //      in the left half of the 32, we know we need at least 16 bits, so we
+  //      hold onto this value for a bit (no pun intended).
+  int res1 = hasBits1 << 4;
+  //   4. Shift the number right by the amount of bits we know we need so far.
+  //      By doing this, we perform the "binary search" aspect of the algorithm.
+  //      If there was a bit in the left half, the next iteration will be
+  //      looking at the first half of this left half - meaning these:
+  //
+  //          00000000 00000000 00000000 00000000
+  //          ^^^^^^^^
+  //
+  //      That's thanks to us shifting the number right by 16 and the next
+  //      iteration shifting right by 8. However, if no bit was in the left
+  //      half, we shift right by 0, and the next iteration shifts right by 8.
+  //      Therefore it will be looking in the first half of the right half:
+  //
+  //          00000000 00000000 00000000 00000000
+  //                            ^^^^^^^^
+  int abs1 = abs >> res1;
+  //   5. Rinse and repeat with smaller and smaller halves until we've found how
+  //      many bits we need in each.
+
+  int hasBits2 = !!(abs1 >> 8);
+  int res2 = hasBits2 << 3;
+  int abs2 = abs1 >> res2;
+
+  int hasBits3 = !!(abs2 >> 4);
+  int res3 = hasBits3 << 2;
+  int abs3 = abs2 >> res3;
+
+  int hasBits4 = !!(abs3 >> 2);
+  int res4 = hasBits4 << 1;
+  int abs4 = abs3 >> res4;
+
+  int hasBits5 = !!(abs4 >> 1);
+  int res5 = hasBits5;
+  int abs5 = abs4 >> res5;
+
+  // 6. Add up all the different "I need at least X bits" results
+  int unsignedBitsRequired = res1 + res2 + res3 + res4 + res5 + abs5;
+
+  // And then we just need one more bit to represent signed numbers.
+  return unsignedBitsRequired + 1;
 }
